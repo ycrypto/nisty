@@ -1,0 +1,14 @@
+[package]
+name = "nisty"
+version = "0.0.0"
+authors = ["Nicolas Stalder <n@stalder.io>"]
+edition = "2018"
+description = "NIST P256 signatures for Cortex-M4 microcontrollers"
+repository = "https://github.com/nickray/nisty"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+categories = ["no-std", "cryptography"]
+keywords = ["no-std", "nist", "secp256r1", "p256", "cryptography", "signatures"]
+
+[dependencies]
+micro-ecc-sys = "0.1.2"
