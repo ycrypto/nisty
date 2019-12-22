@@ -1,25 +1,68 @@
 #![no_std]
+/*! Library for NIST P256 signatures, for when you really need them.
+
+This library completely decouples entropy from key generation and signatures,
+and offers a similar API as [salty][salty].
+
+In particular, all signatures are *deterministic*, similar to [RFC 6979][rfc-6979].
+
+The flip side of this is that we need to pull in a CSRNG, for the ultra-rare
+case where a 32-byte seed does not directly give rise to a valid keypair; we use ChaCha20.
+
+In the backend, this library currently uses [micro-ecc][micro-ecc], exposed via
+[micro-ecc-sys][micro-ecc-sys].
+
+[rfc-6979]: https://tools.ietf.org/html/rfc6979
+[salty]: https://crates.io/crates/salty
+[micro-ecc]: https://github.com/kmackay/micro-ecc
+[micro-ecc-sys]: https://crates.io/crates/micro-ecc-sys
+
+## Example
+```
+let seed = [1u8; 32]; // use an actually entropic seed
+let keypair = nisty::Keypair::from(&seed);
+let message = b"hello, nisty";
+let signature = keypair.sign(message);
+assert!(keypair.public.verify(message, &signature));
+```
+
+## Microcontrollers
+Because `bindgen`, `no_std` and Rust's limited feature tree handling don't play nice
+together, on microcontrollers the bindings to `micro-ecc` need to be pre-generated.
+
+For Cortex-M4 and Cortex-M33 microcontrollers, they are packaged, and it is sufficient
+to use `nisty` as follows:
+
+```toml
+[dependencies.nisty]
+default-features = false
+```
+
+When compiled as release build, these platforms automatically pick up UMAAL assembly optimizations.
+
+On an NXP LPC55S69, signature generation takes around 6.9M cycles, signature verification around 7.6M.
+*/
 
 use micro_ecc_sys as uecc;
 
-pub mod rng;
+mod rng;
 
-#[allow(unused_imports)]
-use cortex_m_semihosting::{dbg, hprintln};
+/// the length of a SHA256 digest
+pub const SHA256_LENGTH: usize = 32;
+// use sha2::digest::generic_array::typenum::marker_traits::Unsigned;
+// pub const SHA2_LENGTH: usize = <sha2::Sha256 as sha2::digest::FixedOutput>::OutputSize::to_usize();
+/// the length of a public key when serialized
+pub const PUBLICKEY_LENGTH: usize = 64;
+/// the length of a public key when serialized in compressed format
+pub const PUBLICKEY_COMPRESSED_LENGTH: usize = 33;
+/// the length of a secret key seed when serialized
+pub const SEED_LENGTH: usize = 32;
+/// the length of a secret key when serialized
+pub const SECRETKEY_LENGTH: usize = 32;
+/// the length of a signature when serialized
+pub const SIGNATURE_LENGTH: usize = 64;
 
-static mut INITIALIZED: bool = false;
-
-// pub fn init() {
-//     unsafe { uecc::uECC_set_rng(Some(fake_rng)) };
-//     unsafe { INITIALIZED = true; }
-
-//     // // experiment
-//     // let key = [0u8; 32];
-//     // let nonce = [0u8; 12];
-//     // use chacha20::stream_cipher::NewStreamCipher;
-//     // let cipher = chacha20::ChaCha20::new_var(&key, &nonce);
-// }
-
+/// Either there is an error, or there is not - no reasons given.
 #[derive(Copy,Clone,Debug)]
 pub struct Error;
 
@@ -36,43 +79,30 @@ pub type Result<T> = core::result::Result<T, Error>;
 //     NistP384,
 // }
 
-static mut RNG: Option<rng::ChaCha20Rng> = None;
+/// 32 entropic bytes, input for key generation.
+#[derive(Copy,Clone,Debug,PartialEq)]
+pub struct Seed([u8; SECRETKEY_LENGTH]);
 
-extern "C" fn chacha_rng(dest: *mut u8, size: u32) -> i32 {
-    let buf = unsafe { core::slice::from_raw_parts_mut(dest, size as usize) } ;
-    let rng_ref_option = unsafe { RNG.as_mut() };
-    if rng_ref_option.is_none() {
-        0
-    } else {
-        let rng_ref = rng_ref_option.unwrap();
-        rng_ref.fill(buf);
-        1
-    }
-}
-
-/// the length of a SHA256 digest
-pub const SHA256_LENGTH: usize = 32;
-/// the length of a public key when serialized
-pub const PUBLICKEY_LENGTH: usize = 64;
-/// the length of a public key when serialized in compressed format
-pub const PUBLICKEY_COMPRESSED_LENGTH: usize = 33;
-/// the length of a secret key when serialized
-pub const SECRETKEY_LENGTH: usize = 32;
-/// the length of a signature when serialized
-pub const SIGNATURE_LENGTH: usize = 64;
-
+/// Secret part of a keypair, a scalar.
 #[derive(Copy,Clone,Debug,PartialEq)]
 pub struct SecretKey(pub [u8; SECRETKEY_LENGTH]);
 
+/// Public part of a keypair, a point on the curve.
 #[derive(Copy,Clone/*,Debug,PartialEq*/)]
 pub struct PublicKey(pub [u8; PUBLICKEY_LENGTH]);
 
+/// Create keys, generate signatures.
+///
+/// Key generation from a seed needs no further entropic input.
+///
+/// Signatures are always deterministic, they need no entropic input.
 #[derive(Copy,Clone/*,Debug,PartialEq*/)]
 pub struct Keypair {
     pub secret: SecretKey,
     pub public: PublicKey,
 }
 
+/// Pair of two curve scalars.
 #[derive(Copy,Clone/*,Debug*/)]
 pub struct Signature(pub [u8; SIGNATURE_LENGTH]);
 
@@ -85,93 +115,75 @@ impl core::cmp::PartialEq<Signature> for Signature {
     }
 }
 
+pub fn prehash(message: &[u8]) -> [u8; SHA256_LENGTH] {
+    use sha2::digest::Digest;
+    let mut hash = sha2::Sha256::new();
+    hash.input(message);
+    let data = hash.result();
+    let mut prehashed = [0u8; SHA256_LENGTH];
+    prehashed.copy_from_slice(data.as_slice());
+    prehashed
+}
 
 impl Keypair {
-    /// NB: need to set RNG first
-    pub fn try_generate() -> Result<Self> {
-        debug_assert!(unsafe { INITIALIZED } );
-        let p256 = unsafe { uecc::uECC_secp256r1() };
-        let mut keypair = Self { secret: SecretKey([0u8; 32]), public: PublicKey([0u8; 64]) };
-        let return_code = unsafe {
-            uecc::uECC_make_key(
-                &mut keypair.secret.0[0] as *mut u8,
-                &mut keypair.public.0[0] as *mut u8,
-                p256,
-            )
-        };
-        if return_code == 1 {
-            Ok(keypair)
-        } else {
-            Err(Error)
-        }
+    // /// NB: need to set RNG first
+    // pub fn try_generate() -> Result<Self> {
+    //     debug_assert!(unsafe { INITIALIZED } );
+    //     let mut keypair = Self { secret: SecretKey([0u8; 32]), public: PublicKey([0u8; 64]) };
+    //     let return_code = unsafe {
+    //         uecc::uECC_make_key(
+    //             &mut keypair.secret.0[0] as *mut u8,
+    //             &mut keypair.public.0[0] as *mut u8,
+    //             Self::curve(),
+    //         )
+    //     };
+    //     if return_code == 1 {
+    //         Ok(keypair)
+    //     } else {
+    //         Err(Error)
+    //     }
+    // }
+
+    fn curve() -> uecc::uECC_Curve {
+        unsafe { uecc::uECC_secp256r1() }
     }
 
-    pub fn try_generate_from(seed: &[u8; SECRETKEY_LENGTH]) -> Result<Self> {
+    //// pub fn try_sign_prehashed(&self, prehashed_message: &[u8; SHA256_LENGTH]) -> Result<Signature> {
+    //pub fn try_sign_prehashed(&self, prehashed_message: &[u8]) -> Result<Signature> {
+    //    debug_assert!(unsafe { INITIALIZED } );
+    //    debug_assert!(prehashed_message.len() == SHA256_LENGTH);
+    //    let mut signature = Signature([0u8; SIGNATURE_LENGTH]);
+    //    let return_code = unsafe {
+    //        // TODO: use uECC_sign_deterministic appropriately
+    //        uecc::uECC_sign(
+    //            &self.secret.0[0] as *const u8,
+    //            //prehashed_message as *const u8,
+    //            prehashed_message.as_ptr(),
+    //            prehashed_message.len() as u32,
+    //            &mut signature.0[0] as *mut u8,
+    //            Self::curve(),
+    //        )
+    //    };
+    //    if return_code == 1 {
+    //        Ok(signature)
+    //    } else {
+    //        Err(Error)
+    //    }
+    //}
 
-        let p256 = unsafe { uecc::uECC_secp256r1() };
-        let mut keypair = Self { secret: SecretKey([0u8; 32]), public: PublicKey([0u8; 64]) };
-
-        // morally, seed can be used as "the" secret key.
-        // however, there are corner cases.
-        // we'd like to use the seed, if possible, and if not, require no further entropy.
-        // idea: give uECC a random number generator that:
-        // - starts with the given seed
-        // - on future calls, returns ChaCha20 CSRNG outputs from given seed
-        // note the probability of  actually ending up in the not-using-seed case:
-        // "this is an utterly improbable occurrence" <-- T. Pornin in RFC 6979
-        // so all this is an elaborate backup plan...
-
-        let rng = rng::ChaCha20Rng::new(seed);
-        unsafe { RNG.replace(rng) };
-        unsafe { uecc::uECC_set_rng(Some(chacha_rng)) };
-
-        let return_code = unsafe {
-            uecc::uECC_make_key(
-                &mut keypair.public.0[0] as *mut u8,
-                &mut keypair.secret.0[0] as *mut u8,
-                p256,
-            )
-        };
-
-        // clean up our temporary RNG again
-        unsafe { uecc::uECC_set_rng(None) };
-        unsafe { RNG.take() };
-
-        if return_code == 1 {
-            Ok(keypair)
-        } else {
-            Err(Error)
-        }
-    }
-
-    // pub fn try_sign_prehashed(&self, prehashed_message: &[u8; SHA256_LENGTH]) -> Result<Signature> {
-    pub fn try_sign_prehashed(&self, prehashed_message: &[u8]) -> Result<Signature> {
-        debug_assert!(unsafe { INITIALIZED } );
-        debug_assert!(prehashed_message.len() == SHA256_LENGTH);
-        let p256 = unsafe { uecc::uECC_secp256r1() };
-        let mut signature = Signature([0u8; SIGNATURE_LENGTH]);
-        let return_code = unsafe {
-            // TODO: use uECC_sign_deterministic appropriately
-            uecc::uECC_sign(
-                &self.secret.0[0] as *const u8,
-                //prehashed_message as *const u8,
-                prehashed_message.as_ptr(),
-                prehashed_message.len() as u32,
-                &mut signature.0[0] as *mut u8,
-                p256,
-            )
-        };
-        if return_code == 1 {
-            Ok(signature)
-        } else {
-            Err(Error)
-        }
+    pub fn sign(&self, message: &[u8]) -> Signature {
+        use sha2::digest::Digest;
+        let mut hash = sha2::Sha256::new();
+        hash.input(message);
+        let data = hash.result();
+        let mut prehashed_message = [0u8; 32];
+        prehashed_message.copy_from_slice(data.as_slice());
+        self.sign_prehashed(&prehashed_message)
     }
 
     // pub fn try_sign_prehashed(&self, prehashed_message: &[u8; SHA256_LENGTH]) -> Result<Signature> {
-    pub fn sign_prehashed_deterministic(&self, prehashed_message: &[u8]) -> Signature {
+    pub fn sign_prehashed(&self, prehashed_message: &[u8; SHA256_LENGTH]) -> Signature {
         debug_assert!(prehashed_message.len() == SHA256_LENGTH);
-        let p256 = unsafe { uecc::uECC_secp256r1() };
         let mut signature = Signature([0u8; SIGNATURE_LENGTH]);
         let mut tmp = [0u8; 128];
 		let hash_context = uecc::uECC_HashContext {
@@ -198,37 +210,114 @@ impl Keypair {
                 prehashed_message.len() as u32,
                 &hash_context,
                 &mut signature.0[0], // as *mut u8,
-                p256,
+                Self::curve(),
             )
         };
         assert_eq!(return_code, 1);
         signature
     }
+
+    pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
+        self.public.verify(message, signature)
+    }
+
+    pub fn verify_prehashed(&self, prehashed_message: &[u8; 32], signature: &Signature) -> bool {
+        self.public.verify_prehashed(prehashed_message, signature)
+    }
+
 }
 
+impl From<&[u8; SEED_LENGTH]> for Keypair {
+
+    fn from(seed: &[u8; SECRETKEY_LENGTH]) -> Self {
+
+        let mut keypair = Self { secret: SecretKey([0u8; 32]), public: PublicKey([0u8; 64]) };
+
+        // morally, seed can be used as "the" secret key.
+        // however, there are corner cases.
+        // we'd like to use the seed, if possible, and if not, require no further entropy.
+        // idea: give uECC a random number generator that:
+        // - starts with the given seed
+        // - on future calls, returns ChaCha20 CSRNG outputs from given seed
+        // note the probability of  actually ending up in the not-using-seed case:
+        // "this is an utterly improbable occurrence" <-- T. Pornin in RFC 6979
+        // so all this is an elaborate backup plan...
+
+        let rng = rng::ChaCha20Rng::new(seed);
+        unsafe {
+            rng::RNG.replace(rng);
+            uecc::uECC_set_rng(Some(rng::chacha_rng));
+        }
+
+        let return_code = unsafe {
+            uecc::uECC_make_key(
+                &mut keypair.public.0[0] as *mut u8,
+                &mut keypair.secret.0[0] as *mut u8,
+                Self::curve(),
+            )
+        };
+
+        // clean up our temporary RNG again
+        unsafe {
+            uecc::uECC_set_rng(None);
+            rng::RNG.take();
+        };
+
+        debug_assert!(return_code == 1);
+        keypair
+    }
+}
+
+// PROBLEM: conflicting implementation
+//
+// impl core::convert::TryFrom<&[u8; SEED_LENGTH]> for Keypair {
+//     type Error = Error;
+
+//     fn try_from(seed: &[u8; SECRETKEY_LENGTH]) -> Result<Self> {
+
+//     (...)
+
+//         // clean up our temporary RNG again
+//         unsafe {
+//             uecc::uECC_set_rng(None);
+//             RNG.take();
+//         };
+
+//         if return_code == 1 {
+//             Ok(keypair)
+//         } else {
+//             Err(Error)
+//         }
+//     }
+// }
+
+
 impl PublicKey {
-    pub fn verify(&self, prehashed_message: &[u8], signature: &Signature) -> bool {
-        let p256 = unsafe { uecc::uECC_secp256r1() };
+    pub fn verify_prehashed(&self, prehashed_message: &[u8; 32], signature: &Signature) -> bool {
         let return_code = unsafe {
             uecc::uECC_verify(
                 &self.0[0], // as *const u8,
                 &prehashed_message[0],
                 prehashed_message.len() as u32,
                 &signature.0[0], // as *const u8,
-                p256,
+                Keypair::curve(),
             )
         };
         return_code == 1
     }
 
+    pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
+        let prehashed_message = prehash(message);
+        self.verify_prehashed(&prehashed_message, signature)
+    }
+
     pub fn compress(&self) -> [u8; PUBLICKEY_COMPRESSED_LENGTH] {
         let mut compressed = [0u8; PUBLICKEY_COMPRESSED_LENGTH];
-        let p256 = unsafe { uecc::uECC_secp256r1() };
         unsafe {
             uecc::uECC_compress(
                 &self.0[0], // as *const u8,
                 &mut compressed[0],
-                p256,
+                Keypair::curve(),
             )
         };
         compressed
@@ -256,8 +345,9 @@ extern "C" fn uecc_update_hash(context: *const uecc::uECC_HashContext, message: 
     sha2.input(&buf);
 }
 
-pub static mut HASHES: u32 = 0;
+static mut HASHES: u32 = 0;
 
+/// How many hash digests were calculated for signatures so far.
 pub fn hash_calls() -> u32 {
     unsafe { HASHES }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "nisty"
-version = "0.0.0"
+version = "0.0.1"
 authors = ["Nicolas Stalder <n@stalder.io>"]
 edition = "2018"
 description = "NIST P256 signatures for Cortex-M4 microcontrollers"
@@ -12,7 +12,6 @@ keywords = ["no-std", "nist", "cryptography", "signatures", "cortex-m"]
 
 [dependencies]
 chacha20 = "0.2.3"
-cortex-m-semihosting = "0.3.5"
 sha2 = { version = "0.8.0", default-features = false }
 
 [dependencies.micro-ecc-sys]
