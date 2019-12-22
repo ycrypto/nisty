@@ -11,5 +11,8 @@ categories = ["no-std", "cryptography"]
 keywords = ["no-std", "nist", "cryptography", "signatures", "cortex-m"]
 
 [dependencies]
-micro-ecc-sys = "0.1.2"
-# sha2 = { version = "0.8.0", default-features = false }
+chacha20 = { version = "0.2.3" }
+cortex-m-semihosting = "0.3.5"
+# micro-ecc-sys = "0.1.2"
+micro-ecc-sys = { path = "../micro-ecc-sys" }
+sha2 = { version = "0.8.0", default-features = false }
