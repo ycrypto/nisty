@@ -54,6 +54,8 @@ extern "C" fn chacha_rng(dest: *mut u8, size: u32) -> i32 {
 pub const SHA256_LENGTH: usize = 32;
 /// the length of a public key when serialized
 pub const PUBLICKEY_LENGTH: usize = 64;
+/// the length of a public key when serialized in compressed format
+pub const PUBLICKEY_COMPRESSED_LENGTH: usize = 33;
 /// the length of a secret key when serialized
 pub const SECRETKEY_LENGTH: usize = 32;
 /// the length of a signature when serialized
@@ -217,6 +219,19 @@ impl PublicKey {
             )
         };
         return_code == 1
+    }
+
+    pub fn compress(&self) -> [u8; PUBLICKEY_COMPRESSED_LENGTH] {
+        let mut compressed = [0u8; PUBLICKEY_COMPRESSED_LENGTH];
+        let p256 = unsafe { uecc::uECC_secp256r1() };
+        unsafe {
+            uecc::uECC_compress(
+                &self.0[0], // as *const u8,
+                &mut compressed[0],
+                p256,
+            )
+        };
+        compressed
     }
 }
 

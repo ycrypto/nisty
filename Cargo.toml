@@ -7,12 +7,24 @@ description = "NIST P256 signatures for Cortex-M4 microcontrollers"
 repository = "https://github.com/nickray/nisty"
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
-categories = ["no-std", "cryptography"]
+categories = ["embedded", "no-std", "cryptography"]
 keywords = ["no-std", "nist", "cryptography", "signatures", "cortex-m"]
 
 [dependencies]
-chacha20 = { version = "0.2.3" }
+chacha20 = "0.2.3"
 cortex-m-semihosting = "0.3.5"
-# micro-ecc-sys = "0.1.2"
-micro-ecc-sys = { path = "../micro-ecc-sys" }
 sha2 = { version = "0.8.0", default-features = false }
+
+[dependencies.micro-ecc-sys]
+default-features = false
+version = "0.1.3"
+
+# git = "https://github.com/nickray/micro-ecc-sys"
+# branch = "main"
+
+# path = "../micro-ecc-sys"
+
+[features]
+default = ["micro-ecc-sys/run-bindgen"]
+no-umaal = ["micro-ecc-sys/no-umaal"]
+square = ["micro-ecc-sys/square"]
