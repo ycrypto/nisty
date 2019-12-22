@@ -27,10 +27,8 @@
 
 ## What is this?
 
-**EXPERIMENTAL. WORK-IN-PROGRESS. DO NOT USE.**
-
 Sometimes NIST P256 signatures need to be used.
-This is an attempt to create a library that is misuse-resistent for that.
+This is an attempt to create a library that is misuse-resistant for that.
 
 The intended targets are Cortex-M4 and Cortex-M33 microcontrollers.
 
