@@ -11,7 +11,7 @@ categories = ["embedded", "no-std", "cryptography"]
 keywords = ["no-std", "nist", "cryptography", "signatures", "cortex-m"]
 
 [dependencies]
-chacha20 = "0.2.3"
+# chacha20 = "0.2.3"
 sha2 = { version = "0.8.0", default-features = false }
 
 [dependencies.micro-ecc-sys]

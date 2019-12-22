@@ -21,7 +21,7 @@ In the backend, this library currently uses [micro-ecc][micro-ecc], exposed via
 ## Example
 ```
 let seed = [1u8; 32]; // use an actually entropic seed
-let keypair = nisty::Keypair::from(&seed);
+let keypair = nisty::Keypair::generate(&seed).unwrap();
 let message = b"hello, nisty";
 let signature = keypair.sign(message);
 assert!(keypair.public.verify(message, &signature));
@@ -46,7 +46,7 @@ On an NXP LPC55S69, signature generation takes around 6.9M cycles, signature ver
 
 use micro_ecc_sys as uecc;
 
-mod rng;
+// mod rng;
 
 /// the length of a SHA256 digest
 pub const SHA256_LENGTH: usize = 32;
@@ -120,6 +120,26 @@ impl Keypair {
         unsafe { uecc::uECC_secp256r1() }
     }
 
+    /// Generate new public key, based on seed assumed entropic.
+    ///
+    /// Instead of calling with `tries = 1`, consider using `Keypair::try_from`.
+    pub fn generate(seed: &[u8; SEED_LENGTH], tries: usize) -> Result<Keypair> {
+        let mut secret = [0u8; SECRETKEY_LENGTH];
+        secret.copy_from_slice(seed);
+
+        use core::convert::TryFrom;
+        for _attempt in 0..tries {
+
+            let candidate = Keypair::try_from(&secret);
+            if candidate.is_ok() {
+                return candidate;
+            }
+            secret = prehash(&secret);
+        }
+
+        Err(Error)
+    }
+
     pub fn sign(&self, message: &[u8]) -> Signature {
         use sha2::digest::Digest;
         let mut hash = sha2::Sha256::new();
@@ -149,8 +169,8 @@ impl Keypair {
             context: hash_context,
             sha: sha2::Sha256::new(),
         };
-        debug_assert!(unsafe { uecc::uECC_get_rng() }.is_none());
-        // unsafe { uecc::uECC_set_rng(None) };  // <-- shouldn't be set here anymore anyway
+        // debug_assert!(unsafe { uecc::uECC_get_rng() }.is_none());
+        unsafe { uecc::uECC_set_rng(None) };  // <-- shouldn't be set here anymore anyway
         let return_code = unsafe {
             // TODO: use uECC_sign_deterministic appropriately
             uecc::uECC_sign_deterministic(
@@ -176,70 +196,32 @@ impl Keypair {
 
 }
 
-impl From<&[u8; SEED_LENGTH]> for Keypair {
+impl core::convert::TryFrom<&[u8; SECRETKEY_LENGTH]> for Keypair {
 
-    fn from(seed: &[u8; SECRETKEY_LENGTH]) -> Self {
+    type Error = Error;
 
-        let mut keypair = Self { secret: SecretKey([0u8; 32]), public: PublicKey([0u8; 64]) };
+    fn try_from(secret_bytes: &[u8; SECRETKEY_LENGTH]) -> Result<Self> {
 
-        // morally, seed can be used as "the" secret key.
-        // however, there are corner cases.
-        // we'd like to use the seed, if possible, and if not, require no further entropy.
-        // idea: give uECC a random number generator that:
-        // - starts with the given seed
-        // - on future calls, returns ChaCha20 CSRNG outputs from given seed
-        // note the probability of  actually ending up in the not-using-seed case:
-        // "this is an utterly improbable occurrence" <-- T. Pornin in RFC 6979
-        // so all this is an elaborate backup plan...
-
-        let rng = rng::ChaCha20Rng::new(seed);
-        unsafe {
-            rng::RNG.replace(rng);
-            uecc::uECC_set_rng(Some(rng::chacha_rng));
-        }
+        let mut keypair = Self {
+            secret: SecretKey(<[u8; 32]>::from(*secret_bytes)),
+            public: PublicKey([0u8; 64]),
+        };
 
         let return_code = unsafe {
-            uecc::uECC_make_key(
-                &mut keypair.public.0[0] as *mut u8,
-                &mut keypair.secret.0[0] as *mut u8,
+            uecc::uECC_compute_public_key(
+                &mut keypair.secret.0[0],
+                &mut keypair.public.0[0],
                 Self::curve(),
             )
         };
 
-        // clean up our temporary RNG again
-        unsafe {
-            uecc::uECC_set_rng(None);
-            rng::RNG.take();
-        };
-
-        debug_assert!(return_code == 1);
-        keypair
+        if return_code == 1 {
+            Ok(keypair)
+        } else {
+            Err(Error)
+        }
     }
 }
-
-// PROBLEM: conflicting implementation
-//
-// impl core::convert::TryFrom<&[u8; SEED_LENGTH]> for Keypair {
-//     type Error = Error;
-
-//     fn try_from(seed: &[u8; SECRETKEY_LENGTH]) -> Result<Self> {
-
-//     (...)
-
-//         // clean up our temporary RNG again
-//         unsafe {
-//             uecc::uECC_set_rng(None);
-//             RNG.take();
-//         };
-
-//         if return_code == 1 {
-//             Ok(keypair)
-//         } else {
-//             Err(Error)
-//         }
-//     }
-// }
-
 
 impl PublicKey {
     pub fn verify_prehashed(&self, prehashed_message: &[u8; 32], signature: &Signature) -> bool {
