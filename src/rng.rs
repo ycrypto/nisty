@@ -13,9 +13,6 @@ pub struct ChaCha20Rng {
     cipher: chacha20::ChaCha20,
 }
 
-// #[allow(unused_imports)]
-// use cortex_m_semihosting::{dbg, hprintln};
-
 impl ChaCha20Rng {
     pub fn new(seed: &[u8; SECRETKEY_LENGTH]) -> Self {
         use chacha20::stream_cipher::NewStreamCipher;
@@ -44,13 +41,6 @@ impl ChaCha20Rng {
             // hprintln!("filled from chacha").ok();
         }
     }
-
-    // pub fn fill(data:
-    // // experiment
-    // let key = [0u8; 32];
-    // let nonce = [0u8; 12];
-    // use chacha20::stream_cipher::NewStreamCipher;
-    // let cipher = chacha20::ChaCha20::new_var(&key, &nonce);
 }
 
 pub(crate) extern "C" fn chacha_rng(dest: *mut u8, size: u32) -> i32 {

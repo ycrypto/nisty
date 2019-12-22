@@ -8,6 +8,7 @@ In particular, all signatures are *deterministic*, similar to [RFC 6979][rfc-697
 
 The flip side of this is that we need to pull in a CSRNG, for the ultra-rare
 case where a 32-byte seed does not directly give rise to a valid keypair; we use ChaCha20.
+Likely, we could get by with just repeatedly hashing the seed if necessary.
 
 In the backend, this library currently uses [micro-ecc][micro-ecc], exposed via
 [micro-ecc-sys][micro-ecc-sys].
@@ -66,18 +67,7 @@ pub const SIGNATURE_LENGTH: usize = 64;
 #[derive(Copy,Clone,Debug)]
 pub struct Error;
 
-// impl core::fmt::Display for Error {
-//     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-//         f.write_str("nisty error")
-//     }
-// }
-
 pub type Result<T> = core::result::Result<T, Error>;
-
-// enum Curves {
-//     NistP256,
-//     NistP384,
-// }
 
 /// 32 entropic bytes, input for key generation.
 #[derive(Copy,Clone,Debug,PartialEq)]
@@ -115,61 +105,20 @@ impl core::cmp::PartialEq<Signature> for Signature {
     }
 }
 
+/// Convenience function, calculates SHA256 hash digest.
 pub fn prehash(message: &[u8]) -> [u8; SHA256_LENGTH] {
     use sha2::digest::Digest;
     let mut hash = sha2::Sha256::new();
     hash.input(message);
     let data = hash.result();
-    let mut prehashed = [0u8; SHA256_LENGTH];
-    prehashed.copy_from_slice(data.as_slice());
-    prehashed
+    data.into()
 }
 
 impl Keypair {
-    // /// NB: need to set RNG first
-    // pub fn try_generate() -> Result<Self> {
-    //     debug_assert!(unsafe { INITIALIZED } );
-    //     let mut keypair = Self { secret: SecretKey([0u8; 32]), public: PublicKey([0u8; 64]) };
-    //     let return_code = unsafe {
-    //         uecc::uECC_make_key(
-    //             &mut keypair.secret.0[0] as *mut u8,
-    //             &mut keypair.public.0[0] as *mut u8,
-    //             Self::curve(),
-    //         )
-    //     };
-    //     if return_code == 1 {
-    //         Ok(keypair)
-    //     } else {
-    //         Err(Error)
-    //     }
-    // }
 
     fn curve() -> uecc::uECC_Curve {
         unsafe { uecc::uECC_secp256r1() }
     }
-
-    //// pub fn try_sign_prehashed(&self, prehashed_message: &[u8; SHA256_LENGTH]) -> Result<Signature> {
-    //pub fn try_sign_prehashed(&self, prehashed_message: &[u8]) -> Result<Signature> {
-    //    debug_assert!(unsafe { INITIALIZED } );
-    //    debug_assert!(prehashed_message.len() == SHA256_LENGTH);
-    //    let mut signature = Signature([0u8; SIGNATURE_LENGTH]);
-    //    let return_code = unsafe {
-    //        // TODO: use uECC_sign_deterministic appropriately
-    //        uecc::uECC_sign(
-    //            &self.secret.0[0] as *const u8,
-    //            //prehashed_message as *const u8,
-    //            prehashed_message.as_ptr(),
-    //            prehashed_message.len() as u32,
-    //            &mut signature.0[0] as *mut u8,
-    //            Self::curve(),
-    //        )
-    //    };
-    //    if return_code == 1 {
-    //        Ok(signature)
-    //    } else {
-    //        Err(Error)
-    //    }
-    //}
 
     pub fn sign(&self, message: &[u8]) -> Signature {
         use sha2::digest::Digest;
