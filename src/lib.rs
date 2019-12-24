@@ -76,6 +76,8 @@ pub const PUBLIC_KEY_LENGTH: usize = 64;
 // pub const PUBLIC_KEY_COMPRESSED_LENGTH: usize = 33;
 /// 32, the length of a secret key seed
 pub const SEED_LENGTH: usize = 32;
+/// 32, the length of a shared secret
+pub const SHARED_SECRET_LENGTH: usize = 32;
 /// 32, the length of a secret key
 pub const SECRET_KEY_LENGTH: usize = 32;
 /// 64, the length of a signature
@@ -166,6 +168,49 @@ impl Seed {
     }
 }
 
+type SharedSecretBytes = [u8; SHARED_SECRET_LENGTH];
+/// Diffie-Helllman shared secret, output of key agreement.
+#[derive(Copy,Clone,Debug,PartialEq)]
+pub struct SharedSecret(SharedSecretBytes);
+
+impl From<SharedSecretBytes> for SharedSecret {
+    fn from(shared_secret_bytes: SharedSecretBytes) -> SharedSecret {
+        SharedSecret(shared_secret_bytes)
+    }
+}
+
+impl Into<SharedSecretBytes> for SharedSecret {
+    fn into(self) -> SharedSecretBytes {
+        self.0
+    }
+}
+
+impl AsArrayRef<SharedSecretBytes> for SharedSecret {
+    fn as_array_ref(&self) -> &SharedSecretBytes {
+        &self.0
+    }
+}
+
+impl AsArrayRef<SharedSecretBytes> for &SharedSecret {
+    fn as_array_ref(&self) -> &SharedSecretBytes {
+        &self.0
+    }
+}
+
+impl SharedSecret {
+    pub fn from_bytes(shared_secret_bytes: SharedSecretBytes) -> Self {
+        Self::from(shared_secret_bytes)
+    }
+
+    pub fn to_bytes(self) -> SharedSecretBytes {
+        self.into()
+    }
+
+    pub fn as_bytes(&self) -> &SharedSecretBytes {
+        self.as_array_ref()
+    }
+}
+
 type SecretKeyBytes = [u8; SECRET_KEY_LENGTH];
 /// Secret part of a keypair, a scalar. Signs messages.
 #[derive(Clone,Debug,PartialEq)]
@@ -244,6 +289,42 @@ impl SecretKey {
 }
 
 impl SecretKey {
+    /// Agree on a shared secret with a public key.
+    ///
+    /// ```
+    /// use nisty::{Keypair, SEED_LENGTH};
+    /// let seed_0 = [0u8; SEED_LENGTH];
+    /// let seed_1 = [1u8; SEED_LENGTH];
+    /// let keypair_0 = Keypair::generate_patiently(&seed_0);
+    /// let keypair_1 = Keypair::generate_patiently(&seed_1);
+    /// assert_ne!(keypair_0.public, keypair_1.public);
+    /// let secret_0 = keypair_0.secret.agree(&keypair_1.public).unwrap();
+    /// let secret_1 = keypair_1.secret.agree(&keypair_0.public).unwrap();
+    /// assert_eq!(secret_0, secret_1);
+    /// ```
+    ///
+    /// TODO: Find out when exactly this can fail. Can we remove Result-ing?
+    pub fn agree(&self, public_key: &PublicKey) -> Result<SharedSecret> {
+        let mut shared_secret = SharedSecret([0u8; SHARED_SECRET_LENGTH]);
+        // debug_assert!(unsafe { uecc::uECC_get_rng() }.is_none());
+        unsafe { uecc::uECC_set_rng(None) };  // <-- shouldn't be set here anymore anyway
+        let return_code = unsafe {
+            uecc::uECC_shared_secret(
+                &public_key.0[0],
+                &self.0[0],
+                &mut shared_secret.0[0],
+                nist_p256(),
+            )
+        };
+        if return_code == 1 {
+            Ok(shared_secret)
+        } else {
+            Err(Error)
+        }
+    }
+}
+
+impl SecretKey {
     pub fn try_from_bytes(secret_key_bytes: &SecretKeyBytes) -> Result<Self> {
         use core::convert::TryFrom;
         Self::try_from(secret_key_bytes)
@@ -293,18 +374,21 @@ impl core::convert::TryFrom<&PublicKeyBytes> for PublicKey {
     }
 }
 
+/// Serialization of public keys into byte arrays.
 impl Into<PublicKeyBytes> for PublicKey {
     fn into(self) -> PublicKeyBytes {
         self.0
     }
 }
 
+/// Serialization of public keys as byte array references.
 impl AsArrayRef<PublicKeyBytes> for PublicKey {
     fn as_array_ref(&self) -> &PublicKeyBytes {
         &self.0
     }
 }
 
+/// Serialization of public key references as byte array references.
 impl AsArrayRef<PublicKeyBytes> for &PublicKey {
     fn as_array_ref(&self) -> &PublicKeyBytes {
         &self.0
