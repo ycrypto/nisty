@@ -1,0 +1,38 @@
+image: archlinux
+
+packages:
+- arm-none-eabi-gcc
+- arm-none-eabi-newlib
+- clang
+- lib32-glibc
+- sccache-bin
+
+sources:
+- https://github.com/nickray/nisty
+
+tasks:
+
+- rust: |
+    curl -sSf https://sh.rustup.rs | sh -s -- -y -q
+    echo 'export RUSTC_WRAPPER=/usr/bin/sccache' >> $HOME/.cargo/env
+    echo 'export RUSTFLAGS="-D warnings"' >> $HOME/.cargo/env
+    source $HOME/.cargo/env
+    rustup target add thumbv7em-none-eabi
+
+- build-thumb: |
+    cd nisty
+    source $HOME/.cargo/env
+    cargo build --target thumbv7em-none-eabi --no-default-features
+    cargo build --target thumbv7em-none-eabi --no-default-features --release
+
+- build-desktop: |
+    cd nisty
+    source $HOME/.cargo/env
+    cargo build
+    cargo build --release
+
+- test-desktop: |
+    cd nisty
+    source $HOME/.cargo/env
+    cargo test
+    cargo test --release

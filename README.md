@@ -13,15 +13,15 @@
     <img src="https://img.shields.io/crates/v/nisty.svg?style=flat-square"
     alt="Crates.io version" />
   </a>
-  <!-- Downloads -->
-  <a href="https://crates.io/crates/nisty">
-    <img src="https://img.shields.io/crates/d/nisty.svg?style=flat-square"
-      alt="Download" />
-  </a>
   <!-- API docs -->
   <a href="https://docs.rs/nisty">
     <img src="https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square"
-      alt="main branch API docs" />
+      alt="API documentation" />
+  </a>
+  <!-- Continuous build -->
+  <a href="https://builds.sr.ht/~nickray/nisty">
+    <img src="https://builds.sr.ht/~nickray/nisty.svg"
+      alt="CI status" />
   </a>
 </div>
 

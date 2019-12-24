@@ -21,7 +21,7 @@ In the backend, this library currently uses [micro-ecc][micro-ecc], exposed via
 
 ## Examples
 ```
-let seed = [0u8; 32]; // use an actually entropic seed (hw RNG, ChaCha20,... )
+let seed = [0u8; 32]; // use an actually entropic seed (hw RNG, ChaCha20Rng, PBKDF,... )
 
 assert!(nisty::Keypair::try_from_bytes(&seed).is_err()); // zero is invalid as secret scalar
 assert!(nisty::Keypair::generate(&seed, 1).is_err()); // equivalent to previous line
@@ -290,6 +290,11 @@ impl SecretKey {
 
 impl SecretKey {
     /// Agree on a shared secret with a public key.
+    ///
+    /// Remark: These shared secrets are not random and should never
+    /// be used as cryptographically strong key material without first being
+    /// passed through a key derivation function, see e.g.
+    /// [RFC 5869, Section 3.3](https://tools.ietf.org/html/rfc5869#section-3.3).
     ///
     /// ```
     /// use nisty::{Keypair, SEED_LENGTH};
