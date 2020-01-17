@@ -14,6 +14,8 @@ conversions are also exposed as associated functions and methods.
 In the backend, this library currently uses [micro-ecc][micro-ecc], exposed via
 [micro-ecc-sys][micro-ecc-sys].
 
+All "numbers" are big-endian.
+
 [rfc-6979]: https://tools.ietf.org/html/rfc6979
 [salty]: https://crates.io/crates/salty
 [micro-ecc]: https://github.com/kmackay/micro-ecc
@@ -43,6 +45,11 @@ signature_bytes[37] = b'X';
 assert!(!public_key.verify(message, signature_bytes));
 ```
 
+## Features
+The `asn1-der` feature adds a method to serialize signatures to the ASN.1 DER format.
+
+The `cose` feature adds a method to convert public keys to COSE public keys.
+
 ## Microcontrollers
 Because `bindgen`, `no_std` and Rust's limited feature tree handling don't play nice
 together ([#4866](https://github.com/rust-lang/cargo/issues/4866)),
@@ -64,6 +71,12 @@ On an NXP LPC55S69, signature generation then takes around 6.9M cycles, signatur
 use micro_ecc_sys as uecc;
 // use zeroize::Zeroize;
 
+#[cfg(feature = "cose")]
+pub use cosey::P256PublicKey as CosePublicKey;
+
+#[cfg(feature = "asn1-der")]
+pub use derpy::{Bytes, consts::U72};
+
 fn nist_p256() -> uecc::uECC_Curve {
     unsafe { uecc::uECC_secp256r1() }
 }
@@ -72,8 +85,12 @@ fn nist_p256() -> uecc::uECC_Curve {
 pub const DIGEST_LENGTH: usize = 32;
 /// 64, the length of a public key
 pub const PUBLIC_KEY_LENGTH: usize = 64;
-// /// 33, the length of a compressed public key
-// pub const PUBLIC_KEY_COMPRESSED_LENGTH: usize = 33;
+/// 32, the length of a public key's x-coordinate.
+pub const PUBLIC_KEY_X_COORDINATES_LENGTH: usize = 32;
+/// 32, the length of a public key's y-coordinate.
+pub const PUBLIC_KEY_Y_COORDINATES_LENGTH: usize = 32;
+/// 33, the length of a compressed public key
+pub const PUBLIC_KEY_COMPRESSED_LENGTH: usize = 33;
 /// 32, the length of a secret key seed
 pub const SEED_LENGTH: usize = 32;
 /// 32, the length of a shared secret
@@ -309,6 +326,8 @@ impl SecretKey {
     /// ```
     ///
     /// TODO: Find out when exactly this can fail. Can we remove Result-ing?
+    ///
+    /// TODO: Clarify whether this is the x-coordinate of (ab.G) = secret_key*public_key or what.
     pub fn agree(&self, public_key: &PublicKey) -> Result<SharedSecret> {
         let mut shared_secret = SharedSecret([0u8; SHARED_SECRET_LENGTH]);
         // debug_assert!(unsafe { uecc::uECC_get_rng() }.is_none());
@@ -345,6 +364,8 @@ impl SecretKey {
 }
 
 type PublicKeyBytes = [u8; PUBLIC_KEY_LENGTH];
+type PublicKeyXCoordinate = [u8; PUBLIC_KEY_X_COORDINATES_LENGTH];
+type PublicKeyYCoordinate = [u8; PUBLIC_KEY_Y_COORDINATES_LENGTH];
 /// Public part of a keypair, a point on the curve. Verifies signatures.
 #[derive(Copy,Clone)]
 pub struct PublicKey(PublicKeyBytes);
@@ -421,6 +442,29 @@ impl PublicKey {
         return_code == 1
     }
 
+    // IETF format: https://tools.ietf.org/html/draft-jivsov-ecc-compact-05#section-3 (2014)
+    // Original source: "Sec 1", https://www.secg.org/sec1-v2.pdf (2009)
+    /// This is the "SEC1" representation of a point on an elliptic curve,
+    /// which is often used in IETF protocols.
+    ///
+    /// Reference: https://tools.ietf.org/html/rfc5480#section-2.2
+    ///
+    /// The first byte contains 2 + the "sign" of the y-coordinate (least significant byte).
+    /// The following 32 bytes are the x-coordinate in big-endian representation.
+    ///
+    /// Note: The "uncompressed" SEC1 format would prepend byte 0x4, it seems in this
+    /// case at least everyone uses "raw" encoding: x || y
+    pub fn compress(&self) -> [u8; PUBLIC_KEY_COMPRESSED_LENGTH] {
+        let mut compressed = [0u8; PUBLIC_KEY_COMPRESSED_LENGTH];
+        compressed[0] = 0x2 + (self.0[self.0.len() - 1] & 0x1);
+        compressed[1..].copy_from_slice(&self.0);
+        compressed
+    }
+
+    // TODO: do this here!
+    // - uncompressed: x || y
+    // - compressed (sec1-v2): 0x4 || x
+    // -
     // pub fn compress(&self) -> [u8; PUBLIC_KEY_COMPRESSED_LENGTH] {
     //     let mut compressed = [0u8; PUBLIC_KEY_COMPRESSED_LENGTH];
     //     unsafe {
@@ -432,6 +476,33 @@ impl PublicKey {
     //     };
     //     compressed
     // }
+}
+
+impl PublicKey {
+
+    pub fn x_coordinate(&self) -> PublicKeyXCoordinate {
+        let mut x = [0u8; PUBLIC_KEY_X_COORDINATES_LENGTH];
+        x.copy_from_slice(&self.0[..32]);
+        x
+    }
+
+    pub fn y_coordinate(&self) -> PublicKeyYCoordinate {
+        let mut y = [0u8; PUBLIC_KEY_X_COORDINATES_LENGTH];
+        y.copy_from_slice(&self.0[32..]);
+        y
+    }
+
+}
+
+#[cfg(feature = "cose")]
+impl Into<CosePublicKey> for PublicKey {
+    fn into(self) -> CosePublicKey {
+        CosePublicKey {
+            x: cosey::Bytes::try_from_slice(&self.x_coordinate()).unwrap(),
+            y: cosey::Bytes::try_from_slice(&self.y_coordinate()).unwrap(),
+        }
+    }
+
 }
 
 impl PublicKey {
@@ -517,6 +588,21 @@ impl Signature {
     pub fn as_bytes(&self) -> &SignatureBytes {
         self.as_array_ref()
     }
+
+    #[cfg(feature = "asn1-der")]
+    pub fn to_asn1_der(&self) -> Bytes::<U72> {
+        let r = &self.0[..32];
+        let s = &self.0[32..];
+
+        let mut der = derpy::Der::<U72>::new();
+        der.sequence(|der| Ok({
+            der.non_negative_integer(r)?;
+            der.non_negative_integer(s)?;
+        })).unwrap();
+
+        der.into_inner()
+    }
+
 }
 
 /// Convenience function, calculates SHA256 hash digest of a slice of bytes.

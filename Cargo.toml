@@ -11,7 +11,10 @@ categories = ["embedded", "no-std", "cryptography"]
 keywords = ["no-std", "nist", "cryptography", "signatures", "cortex-m"]
 
 [dependencies]
-# chacha20 = "0.2.3"
+cosey = { git = "https://github.com/ycrypto/cosey", branch = "main", optional = true }
+# cosey = { path = "../cosey", optional = true }
+derpy = { git = "https://github.com/ycrypto/derpy", branch = "main", optional = true }
+# derpy = { path = "../derpy", optional = true }
 sha2 = { version = "0.8.0", default-features = false }
 # zeroize = { version = "1.1.0", default-features = false, features = ["zeroize_derive"] }
 
@@ -26,5 +29,7 @@ version = "0.1.3"
 
 [features]
 default = ["micro-ecc-sys/run-bindgen"]
+asn1-der = ["derpy"]
+cose = ["cosey"]
 no-umaal = ["micro-ecc-sys/no-umaal"]
 square = ["micro-ecc-sys/square"]
