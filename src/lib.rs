@@ -77,6 +77,9 @@ pub use cosey::P256PublicKey as CosePublicKey;
 #[cfg(feature = "asn1-der")]
 pub use derpy::{Bytes, consts::U72};
 
+#[cfg(feature = "logging")]
+use funnel::info;
+
 fn nist_p256() -> uecc::uECC_Curve {
     unsafe { uecc::uECC_secp256r1() }
 }
@@ -649,10 +652,16 @@ impl Keypair {
     pub fn generate_patiently(seed: impl AsArrayRef<SeedBytes>) -> Keypair {
         let mut secret = <[u8; SECRET_KEY_LENGTH]>::from(*seed.as_array_ref());
         use core::convert::TryFrom;
+        let mut _i: usize = 0;
         loop {
             let candidate = Keypair::try_from(&secret);
+            _i += 1;
             match candidate {
-                Ok(keypair) => return keypair,
+                Ok(keypair) => {
+                    #[cfg(feature = "logging")]
+                    info!("was patient {} times", _i).ok();
+                    return keypair;
+                }
                 _ => {},
             };
             secret = prehash(&secret);
