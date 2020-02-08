@@ -75,7 +75,7 @@ use micro_ecc_sys as uecc;
 pub use cosey::P256PublicKey as CosePublicKey;
 
 #[cfg(feature = "asn1-der")]
-pub use derpy::{Bytes, consts::U72};
+pub use asn1derpy::{Bytes, consts::U72};
 
 #[cfg(feature = "logging")]
 use funnel::info;
@@ -597,7 +597,7 @@ impl Signature {
         let r = &self.0[..32];
         let s = &self.0[32..];
 
-        let mut der = derpy::Der::<U72>::new();
+        let mut der = asn1derpy::Der::<U72>::new();
         der.sequence(|der| Ok({
             der.non_negative_integer(r)?;
             der.non_negative_integer(s)?;
