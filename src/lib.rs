@@ -263,6 +263,13 @@ impl AsArrayRef<SecretKeyBytes> for &SecretKey {
 }
 
 impl SecretKey {
+    /// Sign data using provided secret key buffer.
+    pub fn sign_with(secret_bytes: SecretKeyBytes, message: &[u8]) -> Signature {
+        let secret_key = SecretKey(secret_bytes);
+        let prehashed_message = prehash(message);
+        secret_key.sign_prehashed(&prehashed_message)
+    }
+
     /// Sign arbitrary data.
     ///
     /// Convenience method, calls `sign_prehashed` on `prehash(message)`.
