@@ -586,6 +586,12 @@ impl AsArrayRef<SignatureBytes> for &Signature {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, der::Message)]
+struct DerSignature<'a> {
+    pub r: der::BigUInt<'a, der::consts::U32>,
+    pub s: der::BigUInt<'a, der::consts::U32>,
+}
+
 impl Signature {
     pub fn from_bytes(signature_bytes: SignatureBytes) -> Self {
         Self::from(signature_bytes)
@@ -600,17 +606,19 @@ impl Signature {
     }
 
     #[cfg(feature = "asn1-der")]
-    pub fn to_asn1_der(&self) -> Bytes::<U72> {
-        let r = &self.0[..32];
-        let s = &self.0[32..];
+    pub fn to_der(&self) -> Bytes::<U72> {
+        let signature  = DerSignature {
+            r: der::BigUInt::new(&self.0[..32]).unwrap(),
+            s: der::BigUInt::new(&self.0[32..]).unwrap(),
+        };
 
-        let mut der = asn1derpy::Der::<U72>::new();
-        der.sequence(|der| Ok({
-            der.non_negative_integer(r)?;
-            der.non_negative_integer(s)?;
-        })).unwrap();
+        let mut bytes = Bytes::new();
+        bytes.resize_to_capacity();
 
-        der.into_inner()
+        use der::Encodable;
+        let l = signature.encode_to_slice(&mut bytes).unwrap().len();
+        bytes.resize_default(l).unwrap();
+        bytes
     }
 
 }
@@ -619,8 +627,8 @@ impl Signature {
 pub fn prehash(message: &[u8]) -> [u8; DIGEST_LENGTH] {
     use sha2::digest::Digest;
     let mut hash = sha2::Sha256::new();
-    hash.input(message);
-    let data = hash.result();
+    hash.update(message);
+    let data = hash.finalize();
     data.into()
 }
 
@@ -790,8 +798,8 @@ extern "C" fn uecc_init_hash(context: *const uecc::uECC_HashContext) {
 extern "C" fn uecc_update_hash(context: *const uecc::uECC_HashContext, message: *const u8, message_size: u32) {
     let sha2 = unsafe { &mut(*(context as *mut ShaHashContext)).sha };
     let buf = unsafe { core::slice::from_raw_parts(message, message_size as usize) } ;
-    use sha2::digest::Input;
-    sha2.input(&buf);
+    use sha2::digest::Update;
+    sha2.update(&buf);
 }
 
 static mut HASHES: u32 = 0;
@@ -804,7 +812,7 @@ pub unsafe fn hash_calls() -> u32 {
 extern "C" fn uecc_finish_hash(context: *const uecc::uECC_HashContext, hash_result: *mut u8) {
     let sha2 = unsafe { &mut(*(context as *mut ShaHashContext)).sha };
     use sha2::digest::Digest;
-    let data = sha2.result_reset();
+    let data = sha2.finalize_reset();
     let result = unsafe { core::slice::from_raw_parts_mut(hash_result, DIGEST_LENGTH) } ;
     result.copy_from_slice(&data);
     unsafe { HASHES += 1 };
