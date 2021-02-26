@@ -75,7 +75,9 @@ use micro_ecc_sys as uecc;
 pub use cosey::P256PublicKey as CosePublicKey;
 
 #[cfg(feature = "asn1-der")]
-pub use asn1derpy::{Bytes, consts::U72};
+pub use der::consts::U72;
+#[cfg(feature = "asn1-der")]
+pub use heapless_bytes::Bytes;
 
 #[cfg(feature = "logging")]
 use funnel::info;
