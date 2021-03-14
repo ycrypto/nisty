@@ -469,7 +469,7 @@ impl PublicKey {
     pub fn compress(&self) -> [u8; PUBLIC_KEY_COMPRESSED_LENGTH] {
         let mut compressed = [0u8; PUBLIC_KEY_COMPRESSED_LENGTH];
         compressed[0] = 0x2 + (self.0[self.0.len() - 1] & 0x1);
-        compressed[1..].copy_from_slice(&self.0);
+        compressed[1..].copy_from_slice(&self.0[..32]);
         compressed
     }
 
@@ -504,7 +504,29 @@ impl PublicKey {
         y
     }
 
+    // #[cfg(feature = "asn1-der")]
+    // pub fn to_der(&self) -> Bytes::<U72> {
+    //     let public_key  = DerPublicKey {
+    //         x: der::BigUInt::new(&self.0[..32]).unwrap(),
+    //         y: der::BigUInt::new(&self.0[32..]).unwrap(),
+    //     };
+
+    //     let mut bytes = Bytes::new();
+    //     bytes.resize_to_capacity();
+
+    //     use der::Encodable;
+    //     let l = public_key.encode_to_slice(&mut bytes).unwrap().len();
+    //     bytes.resize_default(l).unwrap();
+    //     bytes
+    // }
+
 }
+
+// #[derive(Copy, Clone, Debug, Eq, PartialEq, der::Message)]
+// struct DerPublicKey<'a> {
+//     pub x: der::BigUInt<'a, der::consts::U32>,
+//     pub y: der::BigUInt<'a, der::consts::U32>,
+// }
 
 #[cfg(feature = "cose")]
 impl Into<CosePublicKey> for PublicKey {

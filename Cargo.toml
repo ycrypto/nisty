@@ -1,6 +1,6 @@
 [package]
 name = "nisty"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 authors = ["Nicolas Stalder <n@stalder.io>"]
 edition = "2018"
 description = "NIST P256 signatures for Cortex-M4 microcontrollers"
